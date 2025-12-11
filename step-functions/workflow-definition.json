@@ -1,0 +1,165 @@
+{
+  "Comment": "Manila Dengue Data Pipeline - Orchestrates cleaning, feature engineering, and EDA jobs with notifications",
+  "StartAt": "CleanData",
+  "States": {
+    "CleanData": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::batch:submitJob.sync",
+      "Parameters": {
+        "JobName": "clean-data-pipeline",
+        "JobQueue": "manila-job-queue",
+        "JobDefinition": "manila-data-cleaning-job:2",
+        "ContainerOverrides": {
+          "Environment": [
+            {
+              "Name": "INPUT_BUCKET",
+              "Value": "manila-dengue-raw-data-pollywag"
+            },
+            {
+              "Name": "INPUT_KEY",
+              "Value": "sample_manila_weather.csv"
+            },
+            {
+              "Name": "OUTPUT_BUCKET",
+              "Value": "manila-dengue-cleaned-data-pollywag"
+            },
+            {
+              "Name": "OUTPUT_KEY",
+              "Value": "cleaned_manila_weather.csv"
+            }
+          ]
+        }
+      },
+      "Next": "FeatureEngineering",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "CleanDataFailed"
+        }
+      ]
+    },
+    "CleanDataFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:048689619018:manila-pipeline-notifications",
+        "Subject": "❌ Manila Dengue Pipeline - Data Cleaning Failed",
+        "Message": "The data cleaning job failed. Please check CloudWatch logs for details."
+      },
+      "Next": "PipelineFailed"
+    },
+    "FeatureEngineering": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::batch:submitJob.sync",
+      "Parameters": {
+        "JobName": "features-pipeline",
+        "JobQueue": "manila-job-queue",
+        "JobDefinition": "manila-feature-engineering-job:8",
+        "ContainerOverrides": {
+          "Environment": [
+            {
+              "Name": "INPUT_BUCKET",
+              "Value": "manila-dengue-cleaned-data-pollywag"
+            },
+            {
+              "Name": "INPUT_KEY",
+              "Value": "cleaned_manila_weather.csv"
+            },
+            {
+              "Name": "OUTPUT_BUCKET",
+              "Value": "manila-dengue-features-pollywag"
+            },
+            {
+              "Name": "OUTPUT_KEY",
+              "Value": "features_manila_weather.csv"
+            }
+          ]
+        }
+      },
+      "Next": "EDA",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "FeatureEngineeringFailed"
+        }
+      ]
+    },
+    "FeatureEngineeringFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:048689619018:manila-pipeline-notifications",
+        "Subject": "❌ Manila Dengue Pipeline - Feature Engineering Failed",
+        "Message": "The feature engineering job failed. Please check CloudWatch logs for details."
+      },
+      "Next": "PipelineFailed"
+    },
+    "EDA": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::batch:submitJob.sync",
+      "Parameters": {
+        "JobName": "eda-pipeline",
+        "JobQueue": "manila-job-queue",
+        "JobDefinition": "manila-eda-job:5",
+        "ContainerOverrides": {
+          "Environment": [
+            {
+              "Name": "INPUT_BUCKET",
+              "Value": "manila-dengue-features-pollywag"
+            },
+            {
+              "Name": "INPUT_KEY",
+              "Value": "features_manila_weather.csv"
+            },
+            {
+              "Name": "OUTPUT_BUCKET",
+              "Value": "manila-dengue-eda-outputs-pollywag"
+            },
+            {
+              "Name": "OUTPUT_PREFIX",
+              "Value": "eda/"
+            }
+          ]
+        }
+      },
+      "Next": "PipelineSuccess",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "EDAFailed"
+        }
+      ]
+    },
+    "EDAFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:048689619018:manila-pipeline-notifications",
+        "Subject": "❌ Manila Dengue Pipeline - EDA Failed",
+        "Message": "The EDA generation job failed. Please check CloudWatch logs for details."
+      },
+      "Next": "PipelineFailed"
+    },
+    "PipelineSuccess": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:048689619018:manila-pipeline-notifications",
+        "Subject": "✅ Manila Dengue Pipeline - Success",
+        "Message": "Pipeline completed successfully!\n\nAll jobs finished:\n✅ Data Cleaning\n✅ Feature Engineering\n✅ EDA Generation\n\nCheck S3 buckets for outputs:\n- manila-dengue-cleaned-data-pollywag\n- manila-dengue-features-pollywag\n- manila-dengue-eda-outputs-pollywag"
+      },
+      "End": true
+    },
+    "PipelineFailed": {
+      "Type": "Fail",
+      "Error": "PipelineExecutionFailed",
+      "Cause": "One of the pipeline jobs failed. Check the error notification email for details."
+    }
+  }
+}
